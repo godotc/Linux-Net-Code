@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "*.cpp": "cpp",
+        "grp.h": "c",
+        "dirent.h": "c"
+    },
+    "jupyter.jupyterServerType": "local"
+}
