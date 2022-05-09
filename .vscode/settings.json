@@ -4,7 +4,8 @@
         "*.py": "python",
         "grp.h": "c",
         "dirent.h": "c",
-        "unistd.h": "c"
+        "unistd.h": "c",
+        "mman.h": "c"
     },
     "jupyter.jupyterServerType": "local"
 }
