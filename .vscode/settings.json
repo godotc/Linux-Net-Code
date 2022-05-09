@@ -5,7 +5,11 @@
         "grp.h": "c",
         "dirent.h": "c",
         "unistd.h": "c",
-        "mman.h": "c"
+        "mman.h": "c",
+        "*.tcc": "c",
+        "memory_resource": "c",
+        "functional": "c",
+        "numeric": "c"
     },
     "jupyter.jupyterServerType": "local"
 }
