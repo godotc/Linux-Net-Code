@@ -6,7 +6,7 @@
 
         ...： arg
         cmd: 操作
-        -F_DUPFD: 复制文件操作符 renturn newfd
+-F_DUPFD: 复制文件操作符 renturn newfd
 -F_GETL 获取指定文件描述符的开状态flag: read write 
 
 -F_SETL: 设置fd 的flag 
