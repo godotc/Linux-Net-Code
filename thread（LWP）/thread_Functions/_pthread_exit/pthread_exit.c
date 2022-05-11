@@ -10,7 +10,12 @@
         void*retval: 需要传递一个指针作为返回值，可以在pthread_join()中获取到
 
 
-       Compile and link with -pthread.
+        Compile and link with -pthread.
+
+        int pthread_equal(t1,t2)
+        不同操作系统phread_t实现类型不同，有的是长整型有的是结构体
+        > 用函数来比较线程id是否相等
+        成功非0值，失败0
 
 */
 
