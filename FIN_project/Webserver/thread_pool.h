@@ -49,7 +49,7 @@ private:
 
 
 template<typename T>
-Thread_pool<T>::Thread_pool(int thread_Num = 8, int max_Request = 10000) :
+Thread_pool<T>::Thread_pool(int thread_Num, int max_Request) :
     m_thread_number(thread_Num), m_max_requests(max_Request), m_stop(false), m_threads(nullptr) {
 
     if ((m_thread_number <= 0) || (max_Request <= 0)) {
