@@ -4,8 +4,11 @@
 #include<pthread.h>
 #include<unistd.h>
 #include<list>
-#include<locker.h>
 #include<iostream>
+
+#include"locker.h"
+#include"http_connection.h"
+
 
 //线程池类，定义成模板类，为了代码的复用，T就是任务类
 template<class T>
@@ -14,8 +17,6 @@ class Thread_pool
 public:
 
     Thread_pool(int thread_Num = 8, int max_Request = 10000);
-
-
     ~Thread_pool();
 
     bool append(T* request);
@@ -71,7 +72,7 @@ Thread_pool<T>::Thread_pool(int thread_Num, int max_Request) :
             throw std::exception();
         }
 
-        if (pthread_detach(m_thread[i])) {
+        if (pthread_detach(m_threads[i])) {
             delete[]  m_threads;
             throw std::exception();
         }
@@ -88,7 +89,8 @@ Thread_pool<T>::~Thread_pool() {
 template<typename T>
 bool Thread_pool<T>::append(T* request) {
 
-    m_queueLocker.lock();
+    m_queueLocker.lock();           //lock
+
     if (m_workQueue.size() > m_max_requests) {
         m_queueLocker.unlock();
         return false;
@@ -96,7 +98,7 @@ bool Thread_pool<T>::append(T* request) {
 
     m_workQueue.push_back(request);
 
-    m_queueLocker.unlock();
+    m_queueLocker.unlock();           //unlock
     m_queseStat.post();
 
     return true;
@@ -133,7 +135,8 @@ void Thread_pool<T>::run() {
             continue;
         }
 
-        request.process();
+        //处理requeset
+        request->process();
 
     }
 }
