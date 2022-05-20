@@ -4,6 +4,7 @@
 int http_connection::m_epollfd = -1;
 int http_connection::m_user_count = 0;
 
+const char* doc_root = "/home/godot/Code/Linux-Net-Code/FIN_project/Webserver/res";
 
 void setnonblocking(int fd)
 {
@@ -20,7 +21,7 @@ void addfd(int epollfd, int fd, bool one_shot)
     //epoll让内核检测什么事件，不写EPOLLET为默认水平触发
 
     //event.events = EPOLLIN | EPOLLRDHUP/*挂起*/;
-    event.events = EPOLLIN | EPOLLRDHUP/*挂起                                                */|EPOLLET/*边缘触发*/;
+    event.events = EPOLLIN | EPOLLRDHUP/*挂起                                                                        */|EPOLLET/*边缘触发*/;
 
     // Oneshot: 一个线程在处理fd的数据时，又有新数据到达，可能会唤醒另一个线程来处理，使用oneshot判断一个文件描述符只能由一个线程处理
     if (one_shot) {
@@ -71,6 +72,13 @@ void http_connection::init() {
     m_checked_index = 0;    //当前以及解析的字符
     m_start_line = 0;   //当前的行
     m_read_idx = 0;     //从socket读取数据的index
+    m_method = GET;
+    m_url = 0;
+    m_version = 0;
+    memset(m_read_buf, 0, sizeof(m_read_buf));
+    m_linger = false;
+    m_content_length = 0;
+    m_real_file = 0;
 }
 
 //关闭链接
@@ -126,11 +134,16 @@ void http_connection::process()
     }
 
     // 生成响应
+    bool write_ret = process_write(read_ret);
+    if (!write_ret) {
+        close_conn();
+    }
+    modfd(m_epollfd, m_sockfd, EPOLLOUT);
 
 }
 
 //（主状态机）解析HTTP请求
-http_connection::HTTP_CODE http_connection::process_read(char* text) {
+http_connection::HTTP_CODE http_connection::process_read() {
 
     //定义初始状态
     LINE_STATUS line_status = LINE_OK;
@@ -154,7 +167,7 @@ http_connection::HTTP_CODE http_connection::process_read(char* text) {
         case CHECK_STATE_REQUESTLINE:
         {
             //解析请求行
-            ret = parse_line(text);
+            ret = parse_request_line(text);
             if (BAD_REQUSEST == ret) {
                 return BAD_REQUSEST;
             }
@@ -165,18 +178,18 @@ http_connection::HTTP_CODE http_connection::process_read(char* text) {
             //解析请求头
             ret = parse_headers(text);
             if (BAD_REQUSEST == ret) {
-                return BAD_REQUSEST
+                return BAD_REQUSEST;
             }
             else if (ret == GET_REQUSET) {
                 //成功获取了完整请求头
-                return do_request();
+                return do_requset();
             }
             break;
         }
         case CHECK_STATE_CONTENT:
         {
             //解析请求体
-            ret = parse_content();
+            ret = parse_content(text);
             if (GET_REQUSET == ret) {
                 return do_requset();
             }
@@ -193,21 +206,107 @@ http_connection::HTTP_CODE http_connection::process_read(char* text) {
 }
 
 
-//解析请求行
-http_connection::HTTP_CODE http_connection::process_request_line(char* text) {
-    
+//解析请求行,获得请求方法，目标URL，HTTP版本
+http_connection::HTTP_CODE http_connection::parse_request_line(char* text) {
+    //GET / HTTP/1.1
+    m_url = strpbrk(text, " \t");
+
+    //GET\0/index.html HTTP/1.1
+    *m_url++ = '\0';
+
+    // method
+    char* method = text;
+    if (strcasecmp(method, "get") == 0) {
+        m_method = GET;
+    }
+    else {
+        return BAD_REQUSEST;
+    }
+
+
+    //   /index.html HTTP/1.1
+    m_version = strpbrk(m_url, " \t");
+    if (!m_version) {
+        return  BAD_REQUSEST;
+    }
+
+    // /index.html\0HTTP/1.1
+    *m_version++ = '\0';
+
+    if (0 != (strcasecmp(m_version, "HTTP/1.1"))) {
+        return  BAD_REQUSEST;
+    }
+
+    // http://*********/index.html\0HTTP/1.1
+    if (strncasecmp(m_url, "http://", 7) == 0) {
+        m_url += 7;
+        m_url = strchr(m_url, '/'); //m_url = index.html
+    }
+
+    if (!m_url || m_url[0] != '/') {
+        return BAD_REQUSEST;
+    }
+
+    //改变主状态机的状态
+    m_check_state = CHECKSTATE_HEADER;  //变成检查请求头
+    return  NO_REQUEST;
 }
 
 //解析请求头
-http_connection::HTTP_CODE http_connection::parse_headers(char* text);
+http_connection::HTTP_CODE http_connection::parse_headers(char* text)
+{
+
+    if (text[0] = '\0') {
+        //遇到空行表示，头部字段解析完毕
+        if (m_content_length != 0) {
+            //说明有请求体
+            m_check_state = CHECK_STATE_CONTENT;
+            return NO_REQUEST;
+        }
+        //否则说明得到了一个完整的请求（只有头）
+        return GET_REQUSET;
+    }
+    else if (strncasecmp(text, "connection:", 11) == 0) {
+        //处理 connection 头部字段 Connection: keep-alive
+        text += 11;
+        text += strspn(text, " \t");
+        if (strcasecmp(text, "keep-alive") == 0) {
+            m_linger = true;
+        }
+    }
+    else if (strncasecmp(text, "Content-Length:", 15) == 0) {
+        // 处理 Content-Length 头字段
+        text += 15;
+        text += strspn(text, " \t");    //把空格或则\t去掉
+        m_content_length = atol(text);
+    }
+    else if (strncasecmp(text, "Host:", 5) == 0) {
+        // Host:
+        text += 5;
+        text += strspn(text, " \t");
+        m_host = text;
+    }
+    else {
+        printf("oop! unkonw header %s \n", text);
+    }
+    return NO_REQUEST;
+}
 
 //解析请求体
-http_connection::HTTP_CODE http_connection::parse_content(char* text);
+http_connection::HTTP_CODE http_connection::parse_content(char* text)
+{
+    //我们只判断它是否被完整的读入了
+    if (m_read_idx >= (m_content_length + m_checked_index)) {
+        text[m_content_length] = '\0';
+        return GET_REQUSET;
+    }
+    return NO_REQUEST;
+}
 
 
 
 //解析每一行，以及\r\n判断
-http_connection::LINE_STATUS http_connection::parse_line(char* text)
+http_connection::LINE_STATUS http_connection::parse_line()
 {
     char temp;
     for (;m_checked_index < m_read_idx;++m_checked_index)
@@ -244,18 +343,95 @@ http_connection::LINE_STATUS http_connection::parse_line(char* text)
 
 
 
-//根据主状态机的状态进行不同的处理
-http_connection::HTTP_CODE http_connection::do_requset() {
+//根据主状态机的状态进行不同的处理,映射到内存地址m_file_address处，并告诉获取文件成功
+http_connection::HTTP_CODE http_connection::do_requset()
+{
+    ///home/godot/Code/Linux-Net-Code/FIN_project/Webserver/res"
+    strcpy(m_real_file, doc_root);
+    int len = strlen(doc_root);
 
+    //把url= index.html(解析请求存在url中)拼接在资源路径后面
+    strncpy(m_real_file + len, m_url, FILENAME_LEN - len - 1);
+
+    //获取m_real_file文件的相关信息，-1失败，0成功
+    if (stat(m_real_file, &m_file_stat) < 0) {
+        return NO_RESOURCE;
+    }
+
+    //判断访问权限
+    if (!(m_file_sata.st_mode & S_IROTH)) {
+        return FORBIDDEN_REQUEST;
+    }
+
+    //判断是否是目录
+    if (S_ISDIR(m_file_stat.st_mode)) {
+        return BAD_REQUSEST;
+    }
+
+    //以只读方式打开文件
+    int fd = open(m_real_file, O_RDONLY);
+    //创建内存映射
+    m_file_addr = (char*)mmap(0, m_file_stat.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+
+    return FILE_REQUEST;
 }
 
-
+//写HTTp
 bool http_connection::write() {
     printf("一次性写完数据\n");
     return true;
 }
 
+bool http_connection::add_response(const char* format, ...)
+{
+    if (m_write_idx >= WRITE_BUFFER_SIZE) {
+        return false;
+    }
+    va_list arg_list;
+    va_start(arg_list, format);
+    int len = vsnprintf(m_write_buf + m_write_idx, WRITE_BUFFER_SIZE - 1 - m_write_idx, format, arg_list);
+    if (len >= (WRITE_BUFFER_SIZE - 1 - m_write_idx)) {
+        return false;
+    }
+    m_wirte_idx += len;
+    va_end();
 
+}
+
+
+
+
+
+//根据服务器处理HTTP请求的结果，决定返回给客户端的内容
+bool http_connection::process_write(http_connection::HTTP_CODE read_ret) {
+    switch (read_ret)
+    {
+    case INTERNAL_ERROR:
+    {
+        add_status_line(500, error_5_title);
+        add_headers(strlen(error_500_form));
+        if (!add_conten(error_500_form)) {
+            return false;
+        }
+        break;
+    }
+    case BAD_REQUSEST:
+    {
+        break;
+    }
+    case NO_RESOURCE:
+    {
+
+    }
+
+
+    default:
+        break;
+    }
+
+    return true;
+}
 
 
 
